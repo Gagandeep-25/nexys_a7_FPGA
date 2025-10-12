@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module digital_watch_fsm
+module timer_stopwatch
 #(
     parameter CLK_FREQ = 100_000_000
 )

@@ -5,31 +5,31 @@ module digital_watch_fsm
     parameter CLK_FREQ = 100_000_000
 )
 (
-    input  wire        clk,
-    input  wire        reset,
+    input  wire clk,
+    input  wire reset,
 
-    input  wire        btn_mode,
-    input  wire        btn_start,
-    input  wire        btn_pause,
-    input  wire        btn_lap,
-    input  wire        btn_set,
+    input  wire btn_mode,
+    input  wire btn_start,
+    input  wire btn_pause,
+    input  wire btn_lap,
+    input  wire btn_set,
     
-    output wire [6:0]  seg,
-    output wire [7:0]  an,
-    output wire        led
+    output wire [6:0] seg,
+    output wire [7:0] an,
+    output wire led
 );
 
     // FSM State Definitions
-    localparam IDLE     = 2'b00;
-    localparam RUNNING  = 2'b01;
-    localparam PAUSED   = 2'b10;
-    localparam TIME_UP  = 2'b11;
+    localparam IDLE = 2'b00;
+    localparam RUNNING = 2'b01;
+    localparam PAUSED = 2'b10;
+    localparam TIME_UP = 2'b11;
 
     reg [1:0] state, next_state;
 
     // Mode and Time Registers
     localparam MODE_STOPWATCH = 1'b0;
-    localparam MODE_TIMER     = 1'b1;
+    localparam MODE_TIMER = 1'b1;
 
     reg mode;
     reg set_mode_active;

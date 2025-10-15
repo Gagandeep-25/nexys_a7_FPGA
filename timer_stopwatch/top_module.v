@@ -1,46 +1,51 @@
 `timescale 1ns / 1ps
 
-module timer_stopwatch
+module digital_watch_fsm
 #(
-    parameter CLK_FREQ = 100_000_000
+    parameter CLK_FREQ = 100_000_000  // default 100 MHz
 )
 (
-    input  wire clk,
-    input  wire reset,
+    input  wire        clk,
+    input  wire        reset,
 
-    input  wire btn_mode,
-    input  wire btn_start,
-    input  wire btn_pause,
-    input  wire btn_lap,
-    input  wire btn_set,
+    input  wire        btn_mode,
+    input  wire        btn_start,
+    input  wire        btn_pause,
+    input  wire        btn_lap,
+    input  wire        btn_set,
     
-    output wire [6:0] seg,
-    output wire [7:0] an,
-    output wire led
+    output wire [6:0]  seg,    // segments (active low typical)
+    output wire [7:0]  an,     // anodes (active low single digit enable)
+    output wire        led
 );
 
-    // FSM State Definitions
-    localparam IDLE = 2'b00;
-    localparam RUNNING = 2'b01;
-    localparam PAUSED = 2'b10;
-    localparam TIME_UP = 2'b11;
+    // FSM states
+    localparam IDLE     = 2'b00;
+    localparam RUNNING  = 2'b01;
+    localparam PAUSED   = 2'b10;
+    localparam TIME_UP  = 2'b11;
 
     reg [1:0] state, next_state;
 
-    // Mode and Time Registers
+    // modes
     localparam MODE_STOPWATCH = 1'b0;
-    localparam MODE_TIMER = 1'b1;
-
+    localparam MODE_TIMER     = 1'b1;
     reg mode;
     reg set_mode_active;
 
-    // Count values (0..59)
-    reg [6:0] count;
-    reg [6:0] lap_time;
-    reg [6:0] set_time_value;
-    reg [6:0] timer_preset_value;
+    // Time as MM:SS
+    reg [5:0] minutes;
+    reg [5:0] seconds;
 
-    // Debounced Buttons 
+    // Lap snapshot MM:SS
+    reg [5:0] lap_minutes;
+    reg [5:0] lap_seconds;
+
+    // Set and preset values stored as total seconds (0..3599 = 59:59)
+    reg [11:0] set_time_value;      // while editing in set-mode
+    reg [11:0] timer_preset_value;  // saved preset
+
+    // Debounced button ticks (assume debounce module exists)
     wire mode_tick, start_tick, pause_tick, lap_tick, set_tick;
 
     debounce #(.CLK_FREQ(CLK_FREQ)) mode_btn_unit  ( .clk(clk), .reset(reset), .button_in(btn_mode),  .button_out(mode_tick)  );
@@ -49,15 +54,15 @@ module timer_stopwatch
     debounce #(.CLK_FREQ(CLK_FREQ)) lap_btn_unit   ( .clk(clk), .reset(reset), .button_in(btn_lap),   .button_out(lap_tick)   );
     debounce #(.CLK_FREQ(CLK_FREQ)) set_btn_unit   ( .clk(clk), .reset(reset), .button_in(btn_set),   .button_out(set_tick)   ); 
 
-    // FSM Sequential Logic
+    // -------------------------
+    // FSM sequential
+    // -------------------------
     always @(posedge clk or posedge reset) begin
-        if (reset)
-            state <= IDLE;
-        else
-            state <= next_state;
+        if (reset) state <= IDLE;
+        else state <= next_state;
     end
 
-    // FSM Combinational Next State Logic
+    // FSM next-state logic
     always @(*) begin
         next_state = state;
         case (state)
@@ -69,7 +74,7 @@ module timer_stopwatch
             RUNNING: begin
                 if (pause_tick)
                     next_state = PAUSED;
-                else if (mode == MODE_TIMER && count == 0)
+                else if (mode == MODE_TIMER && minutes == 6'd0 && seconds == 6'd0)
                     next_state = TIME_UP;
             end
 
@@ -85,93 +90,131 @@ module timer_stopwatch
         endcase
     end
 
-    // Mode, Set Mode, Lap Control
+    // -------------------------
+    // Mode / set-mode / preset save
+    // -------------------------
     always @(posedge clk or posedge reset) begin
         if (reset) begin
             set_mode_active <= 1'b0;
-            timer_preset_value <= 7'd59;
+            timer_preset_value <= 12'd59; // default preset = 00:59
         end else if (set_tick) begin
             if (set_mode_active)
-                timer_preset_value <= set_time_value;
+                timer_preset_value <= set_time_value; // save on exit of set mode
             set_mode_active <= ~set_mode_active;
         end
     end
 
+    // While in set mode, pressing START increments set_time_value by 1s (wrap at 59:59)
     always @(posedge clk or posedge reset) begin
-        if (reset) set_time_value <= 7'd0;
+        if (reset) set_time_value <= 12'd0;
         else if (set_mode_active && start_tick) begin
-            if (set_time_value == 7'd59)
-                set_time_value <= 7'd0;
+            if (set_time_value == 12'd3599)
+                set_time_value <= 12'd0;
             else
-                set_time_value <= set_time_value + 1'b1;
+                set_time_value <= set_time_value + 12'd1;
         end
     end
 
+    // Toggle mode (only if not in set mode)
     always @(posedge clk or posedge reset) begin
         if (reset) mode <= MODE_STOPWATCH;
         else if (mode_tick && !set_mode_active) mode <= ~mode;
     end
 
+    // Lap snapshot (stopwatch only)
     always @(posedge clk or posedge reset) begin
-        if (reset)
-            lap_time <= 7'd0;
-        else if (lap_tick && mode == MODE_STOPWATCH && !set_mode_active)
-            lap_time <= count;
+        if (reset) begin
+            lap_minutes <= 6'd0;
+            lap_seconds <= 6'd0;
+        end else if (lap_tick && mode == MODE_STOPWATCH && !set_mode_active) begin
+            lap_minutes <= minutes;
+            lap_seconds <= seconds;
+        end
     end
 
-    // 1Hz Tick Generator
+    // -------------------------
+    // 1 Hz tick generator
+    // -------------------------
     reg [26:0] one_sec_counter;
     wire one_sec_tick;
 
     always @(posedge clk or posedge reset) begin
         if (reset)
-            one_sec_counter <= 0;
+            one_sec_counter <= 27'd0;
         else if (state == RUNNING) begin
             if (one_sec_counter == CLK_FREQ - 1)
-                one_sec_counter <= 0;
+                one_sec_counter <= 27'd0;
             else
                 one_sec_counter <= one_sec_counter + 1'b1;
         end else begin
-            one_sec_counter <= 0;
+            one_sec_counter <= 27'd0;
         end
     end
 
     assign one_sec_tick = (state == RUNNING) && (one_sec_counter == CLK_FREQ - 1);
 
-    // Counter Behavior under FSM
+    // -------------------------
+    // Time counters (load on mode change / set exit, tick on one_sec_tick)
+    // -------------------------
     wire mode_change = mode_tick;
     wire set_exit   = set_tick && set_mode_active;
 
     always @(posedge clk or posedge reset) begin
         if (reset) begin
-            count <= 7'd0;
+            minutes <= 6'd0;
+            seconds <= 6'd0;
         end 
         else if (mode_change) begin
-            if ((~mode) == MODE_TIMER)
-                count <= timer_preset_value;
-            else
-                count <= 7'd0;
-        end 
+            // If old mode was STOPWATCH, the toggle will switch to TIMER -> load preset
+            // (This sees the old 'mode' value because both always blocks trigger same edge.)
+            if (mode == MODE_STOPWATCH) begin
+                minutes <= timer_preset_value / 60;
+                seconds <= timer_preset_value % 60;
+            end else begin
+                // toggling back to stopwatch -> reset time to 0
+                minutes <= 6'd0;
+                seconds <= 6'd0;
+            end
+        end
         else if (set_exit) begin
-            if (mode == MODE_TIMER)
-                count <= set_time_value;
-            else
-                count <= 7'd0;
+            // Exiting set-mode: if currently in TIMER, apply set value to displayed time
+            if (mode == MODE_TIMER) begin
+                minutes <= set_time_value / 60;
+                seconds <= set_time_value % 60;
+            end else begin
+                minutes <= 6'd0;
+                seconds <= 6'd0;
+            end
         end
         else if (one_sec_tick) begin
             if (mode == MODE_STOPWATCH) begin
-                if (count == 7'd59) count <= 7'd0;
-                else count <= count + 1'b1;
+                // count up
+                if (seconds == 6'd59) begin
+                    seconds <= 6'd0;
+                    if (minutes == 6'd59) minutes <= 6'd0; // wrap at 59:59
+                    else minutes <= minutes + 1'b1;
+                end else begin
+                    seconds <= seconds + 1'b1;
+                end
             end else begin
-                if (count == 7'd0)
-                    count <= timer_preset_value;
-                else
-                    count <= count - 1'b1;
+                // TIMER: count down
+                if (minutes == 6'd0 && seconds == 6'd0) begin
+                    // at zero, stay -- state machine will go to TIME_UP
+                    minutes <= 6'd0;
+                    seconds <= 6'd0;
+                end else if (seconds == 6'd0) begin
+                    seconds <= 6'd59;
+                    minutes <= minutes - 1'b1;
+                end else begin
+                    seconds <= seconds - 1'b1;
+                end
             end
         end
     end
 
-    // LED Blink on TIME_UP
+    // -------------------------
+    // LED blink on TIME_UP
+    // -------------------------
     reg [24:0] blink_timer;
     reg led_reg;
 
@@ -193,14 +236,27 @@ module timer_stopwatch
 
     assign led = led_reg;
 
-    // Display Logic (7-seg multiplexing)
-    wire [3:0] main_tens  = count / 10;
-    wire [3:0] main_units = count % 10;
-    wire [3:0] lap_tens   = lap_time / 10;
-    wire [3:0] lap_units  = lap_time % 10;
-    wire [3:0] set_tens   = set_time_value / 10;
-    wire [3:0] set_units  = set_time_value % 10;
+    // -------------------------
+    // Display conversion
+    // -------------------------
+    wire [3:0] sec_tens   = seconds / 10;
+    wire [3:0] sec_units  = seconds % 10;
+    wire [3:0] min_tens   = minutes / 10;
+    wire [3:0] min_units  = minutes % 10;
 
+    wire [3:0] lap_sec_tens  = lap_seconds / 10;
+    wire [3:0] lap_sec_units = lap_seconds % 10;
+    wire [3:0] lap_min_tens  = lap_minutes / 10;
+    wire [3:0] lap_min_units = lap_minutes % 10;
+
+    wire [5:0] set_minutes = set_time_value / 60;
+    wire [5:0] set_seconds = set_time_value % 60;
+    wire [3:0] set_sec_tens  = set_seconds / 10;
+    wire [3:0] set_sec_units = set_seconds % 10;
+    wire [3:0] set_min_tens  = set_minutes / 10;
+    wire [3:0] set_min_units = set_minutes % 10;
+
+    // 7-seg refresh
     reg [18:0] refresh_counter;
     always @(posedge clk or posedge reset) begin
         if (reset) refresh_counter <= 19'd0;
@@ -213,56 +269,53 @@ module timer_stopwatch
     reg [3:0] data_to_display;
     reg [6:0] current_segments;
 
+    // anode patterns (active low). Using hex for clarity:
+    localparam AN0 = 8'b11111110; 
+    localparam AN1 = 8'b11111101; 
+    localparam AN2 = 8'b11111011; 
+    localparam AN3 = 8'b11110111; 
+    localparam AN4 = 8'b11101111; 
+    localparam AN5 = 8'b11011111; 
+    localparam AN6 = 8'b10111111; 
+    localparam AN7 = 8'b01111111; 
+
     always @(*) begin
-        current_anode = 8'b11111111;
-        data_to_display = 4'd15; // blank
+        current_anode = 8'b11111111;     // default: all off (active low)
+        data_to_display = 4'hF;      // blank
 
         if (set_mode_active) begin
-            case (anode_selector)
-                3'd0: begin 
-                         current_anode = 8'b11111110;
-                         data_to_display = set_units;
-                      end
-                3'd1: begin 
-                         current_anode = 8'b11111101; 
-                         data_to_display = set_tens;  end
-                3'd6: begin 
-                         current_anode = 8'b10111111; 
-                         data_to_display = 4'd12;     
-                      end // E
-                3'd7: begin 
-                         current_anode = 8'b01111111; 
-                         data_to_display = 4'd10;     
-                      end // S
-                default: ;
-            endcase
+            // Show the set value across 4 rightmost digits (MM:SS)
+           case (anode_selector)
+             3'd0: begin current_anode = AN0; data_to_display = set_sec_units; end
+             3'd1: begin current_anode = AN1; data_to_display = set_sec_tens;  end
+             3'd2: begin current_anode = AN2; data_to_display = set_min_units; end
+             3'd3: begin current_anode = AN3; data_to_display = set_min_tens;  end
+             3'd6: begin current_anode = AN6; data_to_display = 4'd12; end // 'E'
+             3'd7: begin current_anode = AN7; data_to_display = 4'd10; end // 'S'
+             default: ;
+          endcase
+
         end else begin
-            case (anode_selector)
-                3'd0: begin 
-                        current_anode = 8'b11111110; 
-                        data_to_display = main_units; 
-                      end
-                3'd1: begin 
-                        current_anode = 8'b1111_1101; 
-                        data_to_display = main_tens;  
-                      end
-                3'd2: begin 
-                        current_anode = 8'b1111_1011; 
-                        data_to_display = lap_units;  
-                      end
-                3'd3: begin 
-                        current_anode = 8'b1111_0111; 
-                        data_to_display = lap_tens;   
-                      end
-                3'd7: begin
-                    current_anode = 8'b0111_1111;
-                    data_to_display = (mode == MODE_STOPWATCH) ? 4'd10 : 4'd11; // S or t
-                end
-                default: ;
-            endcase
+           
+           case (anode_selector)
+    3'd0: begin current_anode = AN0; data_to_display = sec_units; end
+    3'd1: begin current_anode = AN1; data_to_display = sec_tens;  end
+    3'd2: begin current_anode = AN2; data_to_display = lap_sec_units; end
+    3'd3: begin current_anode = AN3; data_to_display = lap_sec_tens;  end
+    3'd4: begin current_anode = AN4; data_to_display = min_units; end
+    3'd5: begin current_anode = AN5; data_to_display = min_tens;  end
+    3'd7: begin 
+        current_anode = AN7; 
+        data_to_display = (mode == MODE_STOPWATCH) ? 4'd10 : 4'd11; // S or t
+    end
+    default: ;
+endcase
+
         end
     end
 
+    // 7-seg encoding (active-low segments)
+    // segments order assumed: {a,b,c,d,e,f,g} active low pattern
     always @(*) begin
         case (data_to_display)
             4'd0: current_segments = 7'b1000000;
@@ -275,10 +328,10 @@ module timer_stopwatch
             4'd7: current_segments = 7'b1111000;
             4'd8: current_segments = 7'b0000000;
             4'd9: current_segments = 7'b0010000;
-            4'd10: current_segments = 7'b0010010; // S
-            4'd11: current_segments = 7'b0000111; // t
-            4'd12: current_segments = 7'b0000110; // E
-            default: current_segments = 7'b1111111; // blank
+            4'd10: current_segments = 7'b0010010; // 'S' (same as 5)
+            4'd11: current_segments = 7'b0000111; // 't'
+            4'd12: current_segments = 7'b0000110; // 'E'
+            default: current_segments = 7'b1111111; // blank (all off)
         endcase
     end
 

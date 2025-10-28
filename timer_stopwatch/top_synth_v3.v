@@ -1,4 +1,4 @@
-`timescale 1ns / 1ps
+
 
 module digital_watch_fsm
 #(
@@ -19,12 +19,11 @@ module digital_watch_fsm
     // --- Outputs ---
     output wire [6:0] seg,  // 7-segment segment lines
     output wire [7:0] an,   // 7-segment anode control
-    output wire led         // TIME_UP LED indicator
+    output wire led,        // TIME_UP LED indicator
+    output wire mode_led    // MODE indicator LED (Timer=ON)
 );
 
-   
     // FSM STATES
-
     localparam IDLE    = 2'b00;
     localparam RUNNING = 2'b01;
     localparam PAUSED  = 2'b10;
@@ -32,30 +31,22 @@ module digital_watch_fsm
 
     reg [1:0] state, next_state;
 
-
     // MODES: Stopwatch (count up) / Timer (count down)
- 
     localparam MODE_STOPWATCH = 1'b0;
     localparam MODE_TIMER     = 1'b1;
     reg mode;
 
-
     // TIME REGISTERS
-
     reg [5:0] minutes, seconds;
     reg [5:0] lap_minutes, lap_seconds;
 
- 
     // TIMER SETUP REGISTERS
-
     reg set_mode_active;
     reg set_field; // 0 = minutes, 1 = seconds
     reg [5:0] set_minutes, set_seconds;
     reg [11:0] timer_preset_value;
 
- 
     // DEBOUNCE MODULES FOR BUTTONS
-
     wire mode_tick, start_tick, pause_tick, lap_tick, set_tick;
 
     debounce #(.CLK_FREQ(CLK_FREQ)) db_mode  (.clk(clk), .reset(reset), .button_in(btn_mode),  .button_out(mode_tick));
@@ -64,9 +55,7 @@ module digital_watch_fsm
     debounce #(.CLK_FREQ(CLK_FREQ)) db_lap   (.clk(clk), .reset(reset), .button_in(btn_lap),   .button_out(lap_tick));
     debounce #(.CLK_FREQ(CLK_FREQ)) db_set   (.clk(clk), .reset(reset), .button_in(btn_set),   .button_out(set_tick));
 
-   
     // FSM SEQUENTIAL LOGIC
- 
     always @(posedge clk or posedge reset) begin
         if (reset)
             state <= IDLE;
@@ -74,9 +63,7 @@ module digital_watch_fsm
             state <= next_state;
     end
 
-  
     // FSM NEXT STATE LOGIC
-
     always @(*) begin
         next_state = state;
         case (state)
@@ -101,9 +88,7 @@ module digital_watch_fsm
         endcase
     end
 
- 
     // MODE TOGGLE LOGIC
-  
     always @(posedge clk or posedge reset) begin
         if (reset)
             mode <= MODE_STOPWATCH;
@@ -111,9 +96,7 @@ module digital_watch_fsm
             mode <= ~mode;
     end
 
-  
     // SET MODE LOGIC (Custom Timer Setup)
- 
     always @(posedge clk or posedge reset) begin
         if (reset) begin
             set_mode_active <= 1'b0;
@@ -142,10 +125,8 @@ module digital_watch_fsm
             // Adjust selected field with rollover handling
             if (start_tick) begin
                 if (set_field == 1'b0) begin
-                    // Increment minutes directly
                     set_minutes <= (set_minutes == 59) ? 0 : set_minutes + 1'b1;
                 end else begin
-                    // Increment seconds and rollover to minutes
                     if (set_seconds == 59) begin
                         set_seconds <= 0;
                         set_minutes <= (set_minutes == 59) ? 0 : set_minutes + 1'b1;
@@ -156,10 +137,8 @@ module digital_watch_fsm
             end
             else if (lap_tick) begin
                 if (set_field == 1'b0) begin
-                    // Decrement minutes directly
                     set_minutes <= (set_minutes == 0) ? 59 : set_minutes - 1'b1;
                 end else begin
-                    // Decrement seconds with borrow from minutes
                     if (set_seconds == 0) begin
                         set_seconds <= 59;
                         set_minutes <= (set_minutes == 0) ? 59 : set_minutes - 1'b1;
@@ -171,9 +150,7 @@ module digital_watch_fsm
         end
     end
 
-  
     // 1-SECOND CLOCK TICK GENERATOR
-  
     reg [26:0] one_sec_counter;
     wire one_sec_tick;
 
@@ -188,20 +165,16 @@ module digital_watch_fsm
 
     assign one_sec_tick = (one_sec_counter == CLK_FREQ - 1);
 
- 
     // MAIN TIME LOGIC (Stopwatch / Timer)
- 
     always @(posedge clk or posedge reset) begin
         if (reset) begin
             minutes <= 0;
             seconds <= 0;
         end
-        // Load preset when exiting set mode
         else if (!set_mode_active && mode == MODE_TIMER && set_tick) begin
             minutes <= set_minutes;
             seconds <= set_seconds;
         end
-        // Load preset when starting timer
         else if (state == IDLE && start_tick && mode == MODE_TIMER) begin
             minutes <= set_minutes;
             seconds <= set_seconds;
@@ -213,7 +186,7 @@ module digital_watch_fsm
                     minutes <= (minutes == 59) ? 0 : minutes + 1'b1;
                 end else seconds <= seconds + 1'b1;
             end 
-            else begin // TIMER COUNTDOWN
+            else begin
                 if (minutes == 0 && seconds == 0) begin
                     minutes <= 0;
                     seconds <= 0;
@@ -227,9 +200,7 @@ module digital_watch_fsm
         end
     end
 
-  
     // LAP LOGIC
- 
     always @(posedge clk or posedge reset) begin
         if (reset) begin
             lap_minutes <= 0;
@@ -241,9 +212,7 @@ module digital_watch_fsm
         end
     end
 
-   
     // LED BLINK FOR TIME-UP
-   
     reg [24:0] blink_timer;
     reg led_reg;
 
@@ -266,9 +235,10 @@ module digital_watch_fsm
 
     assign led = led_reg;
 
-  
+    // --- NEW: MODE LED INDICATOR ---
+    assign mode_led = mode;  // 1 = Timer mode, 0 = Stopwatch mode
+
     // DISPLAY MULTIPLEXING (8 DIGITS)
- 
     wire [3:0] sec_tens  = seconds / 10;
     wire [3:0] sec_units = seconds % 10;
     wire [3:0] min_tens  = minutes / 10;
@@ -324,9 +294,7 @@ module digital_watch_fsm
         end
     end
 
-    
     // 7-SEGMENT DECODER
-    
     always @(*) begin
         case (data_to_display)
             4'd0: current_segments = 7'b1000000;

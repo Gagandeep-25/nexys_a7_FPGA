@@ -10,17 +10,18 @@ module digital_watch_fsm
     input  wire reset,
 
     // --- Buttons ---
-    input  wire btn_mode,   // Switch mode: Stopwatch <-> Timer (SWITCH, not pushbutton)
-    input  wire btn_start,  // Start / Increment
-    input  wire btn_pause,  // Pause
-    input  wire btn_lap,    // Lap / Decrement
-    input  wire btn_set,    // Enter/Exit Set Mode
+    input  wire btn_mode,   
+    input  wire btn_start,  
+    input  wire btn_pause,  
+    input  wire btn_lap,    
+    input  wire btn_set,    
 
     // --- Outputs ---
-    output wire [6:0] seg,  // 7-segment segment lines
-    output wire [7:0] an,   // 7-segment anode control
-    output wire led,        // TIME_UP LED indicator
-    output wire mode_led    // MODE indicator LED (Timer=ON)
+    output wire [6:0] seg,  
+    output wire [7:0] an,   
+    output wire led,
+    output wire [7:0] led1,        
+    output wire mode_led    
 );
 
     // FSM STATES
@@ -158,7 +159,7 @@ module digital_watch_fsm
 
     assign one_sec_tick = (one_sec_counter == CLK_FREQ - 1);
 
-    // MAIN TIME LOGIC (Stopwatch / Timer)
+   
     always @(posedge clk or posedge reset) begin
         if (reset) begin
             minutes <= 0;
@@ -227,8 +228,16 @@ module digital_watch_fsm
     end
 
     assign led = led_reg;
+    assign led1[0] = led_reg;
+    assign led1[1] = led_reg;
+    assign led1[2] = led_reg;
+    assign led1[3] = led_reg;
+    assign led1[4] = led_reg;
+    assign led1[5] = led_reg;
+    assign led1[6] = led_reg;
+    assign led1[7] = led_reg;
 
-    // --- MODE LED INDICATOR ---
+   
     assign mode_led = mode;  // 1 = Timer mode, 0 = Stopwatch mode
 
     // DISPLAY MULTIPLEXING (8 DIGITS)

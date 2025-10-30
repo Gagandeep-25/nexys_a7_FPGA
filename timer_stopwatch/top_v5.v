@@ -20,7 +20,7 @@ module digital_watch_fsm
     output wire [6:0] seg,  
     output wire [7:0] an,   
     output wire led,
-    output wire [7:0] led1,        
+    output wire [13:0] led1,        
     output wire mode_led    
 );
 
@@ -236,6 +236,12 @@ module digital_watch_fsm
     assign led1[5] = led_reg;
     assign led1[6] = led_reg;
     assign led1[7] = led_reg;
+    assign led1[8] = led_reg;
+    assign led1[9] = led_reg;
+    assign led1[10] = led_reg;
+    assign led1[11] = led_reg;
+    assign led1[12] = led_reg;
+    assign led1[13] = led_reg;
 
    
     assign mode_led = mode;  // 1 = Timer mode, 0 = Stopwatch mode
